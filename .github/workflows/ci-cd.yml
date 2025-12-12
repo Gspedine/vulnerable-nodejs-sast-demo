@@ -1,6 +1,6 @@
 name: CI/CD - P2 SAST Demo  # Nome descritivo para a entrega
 
-on:  # Trigger em push/PR nas branches Gitflow (main/develop)
+on:  # Trigger em push/PR nas branches Gitflow
   push:
     branches: [ main, develop ]
   pull_request:
@@ -8,74 +8,62 @@ on:  # Trigger em push/PR nas branches Gitflow (main/develop)
 
 jobs:
   ci:  # Job CI com todas as etapas exigidas
-    runs-on: ubuntu-latest  # Máquina virtual atual (2025)
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout  # Etapa: Baixa o código do repo
-        uses: actions/checkout@v4  # Versão atualizada
+      - name: Checkout  # Etapa: Baixa código
+        uses: actions/checkout@v4
 
-      - name: Install Node.js  # Prepara o ambiente Node
+      - name: Install Node.js  # Prepara ambiente Node
         uses: actions/setup-node@v4
         with:
-          node-version: '18'  # Versão compatível com o projeto (engines no package.json)
+          node-version: '18'  # Compatível com engines no package.json
 
-      - name: Install Dependencies  # Etapa: Install deps (npm ci para clean install)
+      - name: Install Dependencies  # Etapa: Install deps
         run: npm ci
 
-      - name: Run Tests  # Etapa: Executa testes unitários (mocha/chai)
+      - name: Run Tests  # Etapa: Executa testes
         run: npm test
 
-      - name: Run Coverage  # Etapa: Gera cobertura (nyc, mínima sem threshold alto)
+      - name: Run Coverage  # Etapa: Gera cobertura mínima
         run: npm run test:coverage
 
-      - name: SAST - SonarCloud Scan (Obrigatório)  # Etapa: SAST SonarCloud (não para pipeline)
-        uses: SonarSource/sonarcloud-github-action@v2.3.0  # Versão atual
+      - name: SAST - SonarCloud Scan (Obrigatório)  # Etapa: SAST SonarCloud
+        uses: SonarSource/sonarcloud-github-action@v2.3.0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Automático do GitHub
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}  # Seu token Sonar (adicionar em secrets)
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Automático
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}  # Seu token
         with:
           args: >
-            -Dsonar.organization=thmn93  # Sua org real do SonarCloud (do sonar-project.properties)
-            -Dsonar.projectKey=Thmn93_api-sast  # Seu projectKey real (do sonar-project.properties)
-        continue-on-error: true  # Não para o pipeline mesmo com vulnerabilidades (requisito PDF)
+            -Dsonar.organization=thmn93  # Seu org real
+            -Dsonar.projectKey=Thmn93_api-sast  # Seu projectKey real
+        continue-on-error: true  # Não para o pipeline (requisito)
 
-      - name: SAST - Snyk Scan (Diferencial)  # Etapa: SAST extra Snyk (para nota extra, não para pipeline)
+      - name: SAST - Snyk Scan (Diferencial)  # Etapa: SAST extra Snyk
         uses: snyk/actions/node@master
         continue-on-error: true  # Não para o pipeline
         env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}  # Seu token Snyk (adicionar em secrets)
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}  # Seu token Snyk
         with:
-          args: --severity-threshold=medium  # Threshold médio para relatórios de vulnerabilidades
+          args: --severity-threshold=medium
 
-      - name: Build  # Etapa: Build (placeholder, já que Node não compila — ecoa sucesso)
-        run: echo "Build completo - API pronta para deploy"
+      - name: Build  # Etapa: Build (placeholder para Node)
+        run: echo "Build completo"
 
-      - name: Semantic Versioning  # Etapa: Versionamento semântico (gera tag vX.Y.Z)
-        id: semver
-        uses: PaulHodgson/git-semver-tags@v5.0.0  # Versão atual
+      - name: Semantic Versioning  # Etapa: Versionamento semântico (action atualizada)
+        id: tag_version  # ID para outputs
+        uses: mathieudutour/github-tag-action@v6.2  # Action mantida em 2025 para semver tags
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}  # Automático para tagging
 
-      - name: Build Docker Image  # Etapa: Build imagem Docker (usa Dockerfile anexado)
-        run: docker build -t api-sast:${{ steps.semver.outputs.tag }} .  # Tag com versão semântica
+      - name: Build Docker Image  # Etapa: Build imagem Docker
+        run: docker build -t api-sast:${{ steps.tag_version.outputs.new_tag }} .  # Usa tag semântica (ex: v1.0.0)
 
-  cd:  # Job CD (deploy após CI sucesso, só no main)
-    needs: ci  # Executa só se CI passar
+  cd:  # Job CD (deploy após CI)
+    needs: ci
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'  # Apenas na branch de produção
+    if: github.ref == 'refs/heads/main'
     steps:
-      - uses: actions/checkout@v4  # Checkout novamente para CD
+      - uses: actions/checkout@v4
 
-      - name: Login to Docker Hub  # Login Docker Hub (para push imagem, diferencial)
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}  # Seu user Docker Hub (adicionar em secrets)
-          password: ${{ secrets.DOCKER_PASSWORD }}  # Seu token Docker Hub (não senha, gere em Security)
-
-      - name: Build and Push Docker Image  # Build e push imagem para repo público/privado
-        run: |
-          docker build -t seu-dockerhub/api-sast:latest .  # Substitua "seu-dockerhub" pelo seu user Docker Hub
-          docker push seu-dockerhub/api-sast:latest
-
-      - name: Deploy to Render  # Deploy automático no Render (CD completo)
-        uses: johnbeynon/render-deploy-action@v0.0.8  # Action para trigger deploy Render
-        with:
-          service-id: ${{ secrets.RENDER_SERVICE_ID }}  # ID do seu Web Service Render (adicionar em secrets)
-          api-key: ${{ secrets.RENDER_API_KEY }}  # Sua chave API Render (gerada em Account > API Keys)
+      - name: Login to Docker Hub  # Login para push
+        uses: docker/login-action@v
