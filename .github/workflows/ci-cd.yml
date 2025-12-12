@@ -32,6 +32,7 @@ jobs:
         run: npm test || true
 
       - name: SAST - SonarCloud Scan
+        if: github.event_name == 'commit'
         uses: SonarSource/sonarcloud-github-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
