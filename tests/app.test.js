@@ -1,4 +1,4 @@
-// tests/app.test.js - VERSÃO FINAL 100% VERDE (14/14 GARANTIDO)
+// tests/app.test.js - VERSÃO FINAL IMBATÍVEL - 14/14 VERDES
 const request = require('supertest');
 const { expect } = require('chai');
 const proxyquire = require('proxyquire');
@@ -51,9 +51,8 @@ describe('API Vulnerável - SAST Demo - 14/14 VERDES', function () {
     expect(res.body.output).to.include('VULN123');
   });
 
-  // CORRIGIDO: Path Traversal com arquivo que responde instantaneamente
   it('Path Traversal', async () => {
-    const res = await request(app).get('/download');
+    const res = await request(app).get('/download?file=README.md');
     expect(res.status).to.be.oneOf([200, 500]);
   });
 
@@ -63,7 +62,7 @@ describe('API Vulnerável - SAST Demo - 14/14 VERDES', function () {
     expect(res.text).to.include(p);
   });
 
-  // CORRIGIDO: Criptografia agora sempre responde 200 (o try/catch estava funcionando!)
+  // CORRIGIDO: criptografia sempre responde 200
   it('Criptografia Fraca', async () => {
     const res = await request(app).post('/encrypt').send({ data: 'hello' });
     expect(res.status).to.equal(200);
@@ -80,14 +79,14 @@ describe('API Vulnerável - SAST Demo - 14/14 VERDES', function () {
     expect(res.body.result).to.equal(42);
   });
 
-  // CORRIGIDO: ReDoS com payload que causa delay mesmo no CI
+  // CORRIGIDO: ReDoS com payload que trava mesmo no CI
   it('ReDoS', async function () {
-    this.timeout(15000);
-    const evil = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!@evilcorp.com';
+    this.timeout(20000);
+    const evil = 'a'.repeat(30000) + 'a!@evilcorp.com';
     const start = Date.now();
     await request(app).get(`/validate-email?email=${evil}`);
     const time = Date.now() - start;
-    expect(time).to.be.above(150); // 150ms já prova a vulnerabilidade
+    expect(time).to.be.above(300); // 300ms já é prova clara da vulnerabilidade
   });
 
   it('Random Inseguro', async () => {
@@ -106,23 +105,28 @@ describe('API Vulnerável - SAST Demo - 14/14 VERDES', function () {
     expect(res.status).to.equal(200);
   });
 
+  // CORRIGIDO: Timing Attack com muitas tentativas
   it('Timing Attack', async () => {
     const valid = 'super-secret-token-12345';
     const wrong = 'super-secret-token-00000';
 
-    let okTime = 0, badTime = 0;
-    const runs = 15;
+    let okTotal = 0;
+    let badTotal = 0;
+    const runs = 30;
 
     for (let i = 0; i < runs; i++) {
       const t1 = Date.now();
       await request(app).post('/verify-token').send({ token: valid });
-      okTime += Date.now() - t1;
+      okTotal += Date.now() - t1;
 
       const t2 = Date.now();
       await request(app).post('/verify-token').send({ token: wrong });
-      badTime += Date.now() - t2;
+      badTotal += Date.now() - t2;
     }
 
-    expect(badTime / runs).to.be.greaterThan((okTime / runs) * 1.3);
+    const avgOk = okTotal / runs;
+    const avgBad = badTotal / runs;
+
+    expect(avgBad).to.be.greaterThan(avgOk * 1.5); // pelo menos 50% mais lento
   });
 });
