@@ -15,7 +15,7 @@ const app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Configuração do PostgreSQL (local ou Render)
+// Configuração do PostgreSQL
 const poolConfig = process.env.DATABASE_URL
   ? { connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }
   : {
@@ -35,13 +35,16 @@ pool.query('SELECT NOW()', (err) => {
 
 // Swagger
 const swaggerOptions = {
-  definition: { openapi: '3.0.0', info: { title: 'API Vulnerável - SAST Demo', version: '1.0.0' } },
+  definition: {
+    openapi: '3.0.0',
+    info: { title: 'API Vulnerável - SAST Demo', version: '1.0.0' },
+  },
   apis: ['src/app.js'],
 };
 const swaggerDocs = swaggerJSDoc(swaggerOptions);
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
 
-// ENDPOINTS VULNERÁVEIS
+// === ENDPOINTS VULNERÁVEIS ===
 
 app.get('/users/:id', (req, res) => {
   const query = `SELECT * FROM users WHERE id = ${req.params.id}`;
@@ -61,8 +64,8 @@ app.post('/login', (req, res) => {
 });
 
 app.post('/execute', (req, res) => {
-  exec(req.body.command, (err, stdout, stderr) => {
-    res.json({ output: stdout || stderr || err?.message });
+  exec(req.body.command || '', (err, stdout, stderr) => {
+    res.json({ output: stdout || stderr || err?.message || 'no output' });
   });
 });
 
@@ -74,14 +77,12 @@ app.get('/download', (req, res) => {
 });
 
 app.get('/search', (req, res) => {
-  res.send(`Resultados para: ${req.query.q}`);
+  res.send(`Resultados para: ${req.query.q || ''}`);
 });
 
 app.post('/encrypt', (req, res) => {
   try {
-    const algorithm = 'des-ecb'; // ainda fraco
-    const key = Buffer.from('chavefraca');
-    const cipher = crypto.createCipheriv(algorithm, key, null);
+    const cipher = crypto.createCipheriv('des-ecb', Buffer.from('chavefraca'), null);
     let encrypted = cipher.update(req.body.data || '', 'utf8', 'hex');
     encrypted += cipher.final('hex');
     res.json({ encrypted });
@@ -99,7 +100,7 @@ app.get('/fetch-url', (req, res) => {
 
   lib.get(target, (resp) => {
     let data = '';
-    resp.on('data', (c) => data += c);
+    resp.on('data', chunk => data += chunk);
     resp.on('end', () => res.send(data));
   }).on('error', (e) => res.status(500).json({ error: e.message }));
 });
@@ -135,7 +136,7 @@ app.post('/users', (req, res) => {
   const query = `INSERT INTO users (username, email, isadmin) VALUES ('${username}', '${email}', ${isAdmin || false}) RETURNING *`;
   pool.query(query, (err, result) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json(result.rows[0]);
+    res.json(result.rows[0] || {});
   });
 });
 
