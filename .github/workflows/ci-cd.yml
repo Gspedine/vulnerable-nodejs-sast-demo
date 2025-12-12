@@ -1,69 +1,96 @@
-name: CI/CD - P2 SAST Demo  # Nome descritivo para a entrega
+name: CI/CD - P2 SAST Demo
 
-on:  # Trigger em push/PR nas branches Gitflow
+on:
   push:
     branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
 
+# ESSA LINHA RESOLVE O ERRO "Resource not accessible by integration"
+permissions:
+  contents: write      # Permite criar tags e fazer push
+  pull-requests: write # Necessário para o SonarCloud comentar no PR
+
 jobs:
-  ci:  # Job CI com todas as etapas exigidas
+  ci:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout  # Etapa: Baixa código
+      - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # Importante para o github-tag-action funcionar corretamente
 
-      - name: Install Node.js  # Prepara ambiente Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'  # Compatível com engines no package.json
+          node-version: '18'
+          cache: 'npm'
 
-      - name: Install Dependencies  # Etapa: Install deps
+      - name: Install Dependencies
         run: npm ci
 
-      - name: Run Tests  # Etapa: Executa testes
+      - name: Run Tests
         run: npm test
 
-      - name: Run Coverage  # Etapa: Gera cobertura mínima
+      - name: Run Test Coverage
         run: npm run test:coverage
 
-      - name: SAST - SonarCloud Scan (Obrigatório)  # Etapa: SAST SonarCloud
-        uses: SonarSource/sonarcloud-github-action@v2.3.0
+      - name: SAST - SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@v3.0.0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Automático
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}  # Seu token
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
           args: >
-            -Dsonar.organization=thmn93  # Seu org real
-            -Dsonar.projectKey=Thmn93_api-sast  # Seu projectKey real
-        continue-on-error: true  # Não para o pipeline (requisito)
+            -Dsonar.organization=thmn93
+            -Dsonar.projectKey=Thmn93_api-sast
 
-      - name: SAST - Snyk Scan (Diferencial)  # Etapa: SAST extra Snyk
+      - name: SAST - Snyk Scan (Diferencial)
         uses: snyk/actions/node@master
-        continue-on-error: true  # Não para o pipeline
+        continue-on-error: true
         env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}  # Seu token Snyk
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           args: --severity-threshold=medium
 
-      - name: Build  # Etapa: Build (placeholder para Node)
-        run: echo "Build completo"
+      - name: Build Placeholder
+        run: echo "Build completo (Node.js não precisa de artefato)"
 
-      - name: Semantic Versioning  # Etapa: Versionamento semântico (action atualizada)
-        id: tag_version  # ID para outputs
-        uses: mathieudutour/github-tag-action@v6.2  # Action mantida em 2025 para semver tags
+      - name: Semantic Versioning & Create Tag
+        id: tag_version
+        uses: mathieudutour/github-tag-action@v6.2
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}  # Automático para tagging
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          default_bump: patch      # boa prática: bump automático de patch
+          release_branches: main   # só cria release/tag na main (opcional)
+          pre_release: false
 
-      - name: Build Docker Image  # Etapa: Build imagem Docker
-        run: docker build -t api-sast:${{ steps.tag_version.outputs.new_tag }} .  # Usa tag semântica (ex: v1.0.0)
+      - name: Show New Tag (debug)
+        run: echo "Nova tag criada → ${{ steps.tag_version.outputs.new_tag }}"
 
-  cd:  # Job CD (deploy após CI)
+      - name: Build Docker Image
+        run: |
+          docker build -t api-sast:${{ steps.tag_version.outputs.new_tag }} .
+          docker tag api-sast:${{ steps.tag_version.outputs.new_tag }} api-sast:latest
+
+  cd:
     needs: ci
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'  # Só executa deploy na main
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Login to Docker Hub  # Login para push
-        uses: docker/login-action@v
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build & Push Docker Image
+        run: |
+          TAG=${{ steps.tag_version.outputs.new_tag }}
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/api-sast:$TAG .
+          docker tag ${{ secrets.DOCKERHUB_USERNAME }}/api-sast:$TAG ${{ secrets.DOCKERHUB_USERNAME }}/api-sast:latest
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/api-sast:$TAG
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/api-sast:latest
