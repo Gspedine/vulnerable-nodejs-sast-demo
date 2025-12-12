@@ -31,9 +31,6 @@ jobs:
       - name: Run Tests
         run: npm test
 
-      - name: Run Coverage
-        run: npm run test:coverage
-
       - name: SAST - SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@v3.0.0
         env:
