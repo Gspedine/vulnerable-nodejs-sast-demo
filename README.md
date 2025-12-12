@@ -19,3 +19,5 @@ API Node.js intencionalmente vulnerável para testes de ferramentas SAST (SonarC
 ```bash
 npm install
 npm start
+
+teste
