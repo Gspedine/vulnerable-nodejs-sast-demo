@@ -15,24 +15,20 @@ const app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-let pool;
+// Pool criado diretamente (para funcionar com proxyquire)
+const pool = new Pool(
+  process.env.DATABASE_URL
+    ? { connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }
+    : {
+        host: process.env.DB_HOST || 'localhost',
+        user: process.env.DB_USER || 'postgres',
+        password: process.env.DB_PASSWORD || '',
+        database: process.env.DB_NAME || 'sast_demo',
+        port: process.env.DB_PORT || 5432,
+      }
+);
 
-const getPool = () => {
-  if (!pool) {
-    const config = process.env.DATABASE_URL
-      ? { connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }
-      : {
-          host: process.env.DB_HOST || 'localhost',
-          user: process.env.DB_USER || 'postgres',
-          password: process.env.DB_PASSWORD || '',
-          database: process.env.DB_NAME || 'sast_demo',
-          port: process.env.DB_PORT || 5432,
-        };
-    pool = new Pool(config);
-  }
-  return pool;
-};
-
+// Swagger
 const swaggerOptions = {
   definition: { openapi: '3.0.0', info: { title: 'API Vulnerável - SAST Demo', version: '1.0.0' } },
   apis: ['src/app.js'],
@@ -40,9 +36,10 @@ const swaggerOptions = {
 const swaggerDocs = swaggerJSDoc(swaggerOptions);
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
 
+// ENDPOINTS VULNERÁVEIS
 app.get('/users/:id', (req, res) => {
   const query = `SELECT * FROM users WHERE id = ${req.params.id}`;
-  getPool().query(query, (err, result) => {
+  pool.query(query, (err, result) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(result?.rows || []);
   });
@@ -51,7 +48,7 @@ app.get('/users/:id', (req, res) => {
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
   const query = `SELECT * FROM users WHERE username = '${username}' AND password = '${password}'`;
-  getPool().query(query, (err, result) => {
+  pool.query(query, (err, result) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ success: !!result?.rows?.length });
   });
@@ -63,9 +60,13 @@ app.post('/execute', (req, res) => {
   });
 });
 
-app.get('/download', (req, res) => res.sendFile(req.query.file || '', { root: '.' }, () => {}));
+app.get('/download', (req, res) => {
+  res.sendFile(req.query.file || '', { root: '.' }, () => {});
+});
 
-app.get('/search', (req, res) => res.send(`Resultados para: ${req.query.q || ''}`));
+app.get('/search', (req, res) => {
+  res.send(`Resultados para: ${req.query.q || ''}`);
+});
 
 app.post('/encrypt', (req, res) => {
   try {
@@ -116,7 +117,7 @@ app.post('/merge', (req, res) => {
 app.post('/users', (req, res) => {
   const { username, email, isAdmin } = req.body;
   const query = `INSERT INTO users (username, email, isadmin) VALUES ('${username}', '${email}', ${isAdmin || false}) RETURNING *`;
-  getPool().query(query, (err, result) => {
+  pool.query(query, (err, result) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(result?.rows[0] || {});
   });
