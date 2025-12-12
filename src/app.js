@@ -121,7 +121,6 @@ app.post('/calculate', (req, res) => {
 app.get('/validate-email', (req, res) => {
   const evilRegex = /^([a-zA-Z0-9]+)(\+[a-zA-Z0-9]+)*@evilcorp\.com$/;
   const valid = evilRegex.test(req.query.email || '');
-  '');
   res.json({ valid });
 });
 
