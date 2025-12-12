@@ -57,7 +57,7 @@ describe('API Vulnerável - SAST Demo', function () {
     expect(res.text).to.include(p);
   });
 
-  it('Criptografia Fraca (DES)', async () => {
+  it('Criptografia Fraca', async () => {
     const res = await request(app).post('/encrypt').send({ data: 'hello' });
     expect(res.status).to.equal(200);
   });

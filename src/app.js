@@ -10,16 +10,17 @@ const crypto = require('crypto');
 const swaggerJSDoc = require('swagger-jsdoc');
 const swaggerUi = require('swagger-ui-express');
 
+// Forçar o mesmo módulo pg usado nos testes
+const { Pool } = require('pg');
+
 const app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Pool criado apenas quando necessário (para permitir o stub nos testes)
 let pool;
 
 const getPool = () => {
   if (!pool) {
-    const { Pool } = require('pg');
     const config = process.env.DATABASE_URL
       ? { connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }
       : {
@@ -36,22 +37,18 @@ const getPool = () => {
 
 // Swagger
 const swaggerOptions = {
-  definition: {
-    openapi: '3.0.0',
-    info: { title: 'API Vulnerável - SAST Demo', version: '1.0.0' },
-  },
+  definition: { openapi: '3.0.0', info: { title: 'API Vulnerável - SAST Demo', version: '1.0.0' } },
   apis: ['src/app.js'],
 };
 const swaggerDocs = swaggerJSDoc(swaggerOptions);
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
 
-// ENDPOINTS VULNERÁVEIS (intencionais)
-
+// ENDPOINTS VULNERÁVEIS
 app.get('/users/:id', (req, res) => {
   const query = `SELECT * FROM users WHERE id = ${req.params.id}`;
   getPool().query(query, (err, result) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json(result.rows || []);
+    res.json(result?.rows || []);
   });
 });
 
@@ -60,7 +57,7 @@ app.post('/login', (req, res) => {
   const query = `SELECT * FROM users WHERE username = '${username}' AND password = '${password}'`;
   getPool().query(query, (err, result) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json({ success: result.rows.length > 0 });
+    res.json({ success: !!result?.rows?.length });
   });
 });
 
@@ -103,7 +100,7 @@ app.get('/fetch-url', (req, res) => {
 
 app.post('/calculate', (req, res) => {
   try {
-    const result = eval(req.body.expression || '0'); // NOSONAR
+    const result = eval(req.body.expression || '0');
     res.json({ result });
   } catch (e) {
     res.status(500).json({ error: 'eval error' });
@@ -132,7 +129,7 @@ app.post('/users', (req, res) => {
   const query = `INSERT INTO users (username, email, isadmin) VALUES ('${username}', '${email}', ${isAdmin || false}) RETURNING *`;
   getPool().query(query, (err, result) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json(result.rows[0] || {});
+    res.json(result?.rows[0] || {});
   });
 });
 
@@ -141,18 +138,12 @@ app.post('/verify-token', (req, res) => {
   const validToken = 'super-secret-token-12345';
   let valid = true;
   for (let i = 0; i < token.length; i++) {
-    if (token[i] !== validToken[i]) {
-      valid = false;
-      break;
-    }
+    if (token[i] !== validToken[i]) { valid = false; break; }
   }
   res.json({ valid });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`API rodando na porta ${PORT}`);
-  console.log(`Swagger: http://localhost:${PORT}/api-docs`);
-});
+app.listen(PORT, () => console.log(`API rodando na porta ${PORT}`));
 
 module.exports = app;
