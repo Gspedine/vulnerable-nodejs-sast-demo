@@ -75,4 +75,7 @@ jobs:
           docker push seu-dockerhub/api-sast:latest
 
       - name: Deploy to Render  # Deploy automático no Render (CD completo)
-        uses: johnbey
+        uses: johnbeynon/render-deploy-action@v0.0.8  # Action para trigger deploy Render
+        with:
+          service-id: ${{ secrets.RENDER_SERVICE_ID }}  # ID do seu Web Service Render (adicionar em secrets)
+          api-key: ${{ secrets.RENDER_API_KEY }}  # Sua chave API Render (gerada em Account > API Keys)
