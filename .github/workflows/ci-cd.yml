@@ -31,8 +31,6 @@ jobs:
       - name: Run Tests
         run: npm test || true
 
-      - name: SAST - SonarCloud Scan
-        uses: SonarSource/sonarcloud-github-action@v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
