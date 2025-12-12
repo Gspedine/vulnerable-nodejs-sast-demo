@@ -2,7 +2,6 @@
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
-const { Pool } = require('pg');
 const { exec } = require('child_process');
 const http = require('http');
 const https = require('https');
@@ -15,42 +14,48 @@ const app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-const poolConfig = process.env.DATABASE_URL
-  ? { connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }
-  : {
-      host: process.env.DB_HOST || 'localhost',
-      user: process.env.DB_USER || 'postgres',
-      password: process.env.DB_PASSWORD || '',
-      database: process.env.DB_NAME || 'sast_demo',
-      port: process.env.DB_PORT || 5432,
-    };
+// NÃO CRIA O POOL AQUI — será criado só quando necessário (e mockado nos testes)
+let pool;
 
-const pool = new Pool(poolConfig);
+// Função para obter o pool (permite mock nos testes)
+const getPool = () => {
+  if (!pool) {
+    const { Pool } = require('pg');
+    const config = process.env.DATABASE_URL
+      ? { connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }
+      : {
+          host: process.env.DB_HOST || 'localhost',
+          user: process.env.DB_USER || 'postgres',
+          password: process.env.DB_PASSWORD || '',
+          database: process.env.DB_NAME || 'sast_demo',
+          port: process.env.DB_PORT || 5432,
+        };
+    pool = new Pool(config);
+  }
+  return pool;
+};
 
-pool.query('SELECT NOW()', () => {});
-
+// Swagger
 const swaggerOptions = {
-  definition: {
-    openapi: '3.0.0',
-    info: { title: 'API Vulnerável - SAST Demo', version: '1.0.0' },
-  },
+  definition: { openapi: '3.0.0', info: { title: 'API Vulnerável - SAST Demo', version: '1.0.0' } },
   apis: ['src/app.js'],
 };
 const swaggerDocs = swaggerJSDoc(swaggerOptions);
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
+app.use('/api.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
 
+// ENDPOINTS VULNERÁVEIS
 app.get('/users/:id', (req, res) => {
   const query = `SELECT * FROM users WHERE id = ${req.params.id}`;
-  pool.query(query, (err, result) => {
+  getPool().query(query, (err, result) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json(result.rows);
+    res.json(result.rows || []);
   });
 });
 
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
   const query = `SELECT * FROM users WHERE username = '${username}' AND password = '${password}'`;
-  pool.query(query, (err, result) => {
+  getPool().query(query, (err, result) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ success: result.rows.length > 0 });
   });
@@ -84,16 +89,13 @@ app.post('/encrypt', (req, res) => {
 
 app.get('/fetch-url', (req, res) => {
   const target = req.query.url || '';
-  if (!target) return res.status(400).json({ error: 'url required' });
-
-  const parsed = url.parse(target);
-  const lib = parsed.protocol === 'http:' ? http : https;
-
-  lib.get(target, (resp) => {
-    let data = '';
-    resp.on('data', c => data += c);
-    resp.on('end', () => res.send(data));
-  }).on('error', () => res.status(500).send('SSRF error'));
+  if (!target) return res.status(400).send('url required');
+  const lib = target.startsWith('https') ? https : http;
+  lib.get(target, (r) => {
+    let d = '';
+    r.on('data', c => d += c);
+    r.on('end', () => res.send(d));
+  }).on('error', () => res.status(500).send('error'));
 });
 
 app.post('/calculate', (req, res) => {
@@ -101,7 +103,7 @@ app.post('/calculate', (req, res) => {
     const result = eval(req.body.expression || '0');
     res.json({ result });
   } catch (e) {
-    res.status(500).json({ error: 'Eval error' });
+    res.status(500).json({ error: 'eval error' });
   }
 });
 
@@ -125,28 +127,23 @@ app.post('/merge', (req, res) => {
 app.post('/users', (req, res) => {
   const { username, email, isAdmin } = req.body;
   const query = `INSERT INTO users (username, email, isadmin) VALUES ('${username}', '${email}', ${isAdmin || false}) RETURNING *`;
-  pool.query(query, (err, result) => {
+  getPool().query(query, (err, result) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(result.rows[0] || {});
   });
 });
 
 app.post('/verify-token', (req, res) => {
-  const validToken = 'super-secret-token-12345';
   const token = req.body.token || '';
+  const validToken = 'super-secret-token-12345';
   let valid = true;
   for (let i = 0; i < token.length; i++) {
-    if (token[i] !== validToken[i]) {
-      valid = false;
-      break;
-    }
+    if (token[i] !== validToken[i]) { valid = false; break; }
   }
   res.json({ valid });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`API rodando na porta ${PORT}`);
-});
+app.listen(PORT, () => console.log(`API rodando na porta ${PORT}`));
 
 module.exports = app;
