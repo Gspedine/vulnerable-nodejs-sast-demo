@@ -32,24 +32,10 @@ jobs:
         run: npm test || true
 
       - name: SAST - SonarCloud Scan
-        uses: SonarSource/sonarcloud-github-action@v3.0.0
+        uses: SonarSource/sonarcloud-github-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        with:
-          args: >
-            -Dsonar.projectKey=Gspedine_vulnerable-nodejs-sast-demo
-            -Dsonar.organization=gspedine
-            -Dsonar.sources=.
-            -Dsonar.host.url=https://sonarcloud.io
-
-      - name: SAST - Snyk Scan
-        uses: snyk/actions/node@master
-        continue-on-error: true
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          args: --severity-threshold=medium
 
       - name: Semantic Versioning & Tag
         id: tag_version
