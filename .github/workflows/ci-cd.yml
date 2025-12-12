@@ -38,8 +38,8 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
           args: >
-            -Dsonar.projectKey=thmn93_api-sast
-            -Dsonar.organization=thmn93
+            -Dsonar.projectKey=Gspedine_vulnerable-nodejs-sast-demo
+            -Dsonar.organization=gspedine
             -Dsonar.sources=.
             -Dsonar.host.url=https://sonarcloud.io
 
