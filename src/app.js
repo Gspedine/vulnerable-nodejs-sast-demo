@@ -2,6 +2,7 @@
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
+const { Pool } = require('pg');
 const { exec } = require('child_process');
 const http = require('http');
 const https = require('https');
@@ -9,9 +10,6 @@ const url = require('url');
 const crypto = require('crypto');
 const swaggerJSDoc = require('swagger-jsdoc');
 const swaggerUi = require('swagger-ui-express');
-
-// Forçar o mesmo módulo pg usado nos testes
-const { Pool } = require('pg');
 
 const app = express();
 app.use(bodyParser.json());
@@ -35,7 +33,6 @@ const getPool = () => {
   return pool;
 };
 
-// Swagger
 const swaggerOptions = {
   definition: { openapi: '3.0.0', info: { title: 'API Vulnerável - SAST Demo', version: '1.0.0' } },
   apis: ['src/app.js'],
@@ -43,7 +40,6 @@ const swaggerOptions = {
 const swaggerDocs = swaggerJSDoc(swaggerOptions);
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
 
-// ENDPOINTS VULNERÁVEIS
 app.get('/users/:id', (req, res) => {
   const query = `SELECT * FROM users WHERE id = ${req.params.id}`;
   getPool().query(query, (err, result) => {
@@ -67,14 +63,9 @@ app.post('/execute', (req, res) => {
   });
 });
 
-app.get('/download', (req, res) => {
-  const file = req.query.file || '';
-  res.sendFile(file, { root: '.' }, () => {});
-});
+app.get('/download', (req, res) => res.sendFile(req.query.file || '', { root: '.' }, () => {}));
 
-app.get('/search', (req, res) => {
-  res.send(`Resultados para: ${req.query.q || ''}`);
-});
+app.get('/search', (req, res) => res.send(`Resultados para: ${req.query.q || ''}`));
 
 app.post('/encrypt', (req, res) => {
   try {
@@ -91,7 +82,7 @@ app.get('/fetch-url', (req, res) => {
   const target = req.query.url || '';
   if (!target) return res.status(400).send('url required');
   const lib = target.startsWith('https') ? https : http;
-  lib.get(target, (r) => {
+  lib.get(target, r => {
     let d = '';
     r.on('data', c => d += c);
     r.on('end', () => res.send(d));
@@ -109,13 +100,11 @@ app.post('/calculate', (req, res) => {
 
 app.get('/validate-email', (req, res) => {
   const evilRegex = /^([a-zA-Z0-9]+)(\+[a-zA-Z0-9]+)*@evilcorp\.com$/;
-  const valid = evilRegex.test(req.query.email || '');
-  res.json({ valid });
+  res.json({ valid: evilRegex.test(req.query.email || '') });
 });
 
 app.get('/generate-token', (req, res) => {
-  const token = Math.random().toString(36).substring(2, 15);
-  res.json({ token });
+  res.json({ token: Math.random().toString(36).substring(2, 15) });
 });
 
 app.post('/merge', (req, res) => {
