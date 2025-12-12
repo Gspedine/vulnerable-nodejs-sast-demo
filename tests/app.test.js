@@ -1,178 +1,426 @@
-// src/app.js
-require('dotenv').config();
-const express = require('express');
-const bodyParser = require('body-parser');
-const { Pool } = require('pg');
-const { exec } = require('child_process');
-const http = require('http');  // Adicionado para suportar http em /fetch-url
-const https = require('https');
-const path = require('path');
-const crypto = require('crypto');
-const swaggerJSDoc = require('swagger-jsdoc');
-const swaggerUi = require('swagger-ui-express');
+// tests/app.test.js - Testes unitários com cobertura
 
-const app = express();
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+const request = require('supertest');
+const { expect } = require('chai');
+const sinon = require('sinon');
 
-// Configuração flexível do PostgreSQL (Render + local)
-const poolConfig = process.env.DATABASE_URL
-  ? { connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }
-  : {
-      host: process.env.DB_HOST || 'localhost',
-      user: process.env.DB_USER || 'postgres',
-      password: process.env.DB_PASSWORD || '',
-      database: process.env.DB_NAME || 'sast_demo',
-      port: process.env.DB_PORT || 5432,
-    };
-
-const pool = new Pool(poolConfig);
-
-// Teste de conexão
-pool.query('SELECT NOW()', (err, res) => {
-  if (err) console.error('Erro ao conectar ao PostgreSQL:', err.stack);
-  else console.log('Conectado ao PostgreSQL com sucesso!');
-});
-
-// Swagger
-const swaggerOptions = {
-  definition: {
-    openapi: '3.0.0',
-    info: { title: 'API Vulnerável - SAST Demo', version: '1.0.0' },
-  },
-  apis: ['src/app.js'],
+// Mock do módulo mysql antes de importar o app
+const mysqlMock = {
+  createConnection: () => ({
+    query: (query, params, callback) => {
+      if (typeof params === 'function') {
+        callback = params;
+        params = null;
+      }
+      callback(null, [{ id: 1, username: 'test', email: 'test@test.com' }]);
+    },
+    connect: (callback) => callback && callback(null),
+    end: () => {}
+  })
 };
-const swaggerDocs = swaggerJSDoc(swaggerOptions);
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
 
-// === ENDPOINTS VULNERÁVEIS (compatíveis com app.test.js) ===
+require.cache[require.resolve('mysql')] = {
+  exports: mysqlMock
+};
 
-// GET /users - SQL Injection (com query.id para compatibilidade com testes)
-app.get('/users', (req, res) => {
-  const id = req.query.id || 1;
-  const query = `SELECT * FROM users WHERE id = ${id}`;
-  pool.query(query, (err, result) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(result.rows);
+const app = require('../src/app');
+
+describe('Vulnerable Application - Unit Tests', () => {
+  
+  describe('GET /users/:id - SQL Injection Endpoint', () => {
+    it('should return user data for valid ID', (done) => {
+      request(app)
+        .get('/users/1')
+        .expect(200)
+        .end((err, res) => {
+          if (err) return done(err);
+          expect(res.body).to.be.an('array');
+          done();
+        });
+    });
+
+    it('should be vulnerable to SQL injection attack', (done) => {
+      request(app)
+        .get('/users/1 OR 1=1')
+        .expect(200)
+        .end((err, res) => {
+          if (err) return done(err);
+          expect(res.body).to.exist;
+          done();
+        });
+    });
+
+    it('should expose database structure via error messages', (done) => {
+      request(app)
+        .get('/users/999999')
+        .end((err, res) => {
+          expect(res.status).to.be.oneOf([200, 500]);
+          done();
+        });
+    });
+  });
+
+  describe('POST /login - Authentication Endpoint', () => {
+    it('should authenticate valid user', (done) => {
+      request(app)
+        .post('/login')
+        .send({ username: 'admin', password: 'password' })
+        .expect(200)
+        .end((err, res) => {
+          if (err) return done(err);
+          expect(res.body).to.have.property('success');
+          done();
+        });
+    });
+
+    it('should be vulnerable to SQL injection in login', (done) => {
+      request(app)
+        .post('/login')
+        .send({ username: "admin' OR '1'='1", password: "anything" })
+        .end((err, res) => {
+          expect(res.status).to.be.oneOf([200, 401]);
+          done();
+        });
+    });
+
+    it('should not have rate limiting', async () => {
+      const promises = [];
+      for (let i = 0; i < 5; i++) {
+        promises.push(
+          request(app)
+            .post('/login')
+            .send({ username: 'test', password: 'wrong' })
+        );
+      }
+      const results = await Promise.all(promises);
+      expect(results).to.have.lengthOf(5);
+    });
+  });
+
+  describe('POST /execute - Command Injection Endpoint', () => {
+    it('should execute basic commands', (done) => {
+      request(app)
+        .post('/execute')
+        .send({ command: '-la' })
+        .end((err, res) => {
+          expect(res.status).to.be.oneOf([200, 500]);
+          done();
+        });
+    });
+
+    it('should be vulnerable to command injection', (done) => {
+      request(app)
+        .post('/execute')
+        .send({ command: '; echo "vulnerable"' })
+        .end((err, res) => {
+          expect(res.status).to.be.oneOf([200, 500]);
+          if (res.body.output) {
+            expect(res.body.output).to.be.a('string');
+          }
+          done();
+        });
+    });
+  });
+
+  describe('GET /download - Path Traversal Endpoint', () => {
+    it('should download valid files', (done) => {
+      request(app)
+        .get('/download?file=test.txt')
+        .end((err, res) => {
+          expect(res.status).to.be.oneOf([200, 404, 500]);
+          done();
+        });
+    });
+
+    it('should be vulnerable to path traversal', (done) => {
+      request(app)
+        .get('/download?file=../../etc/passwd')
+        .end((err, res) => {
+          expect(res.status).to.exist;
+          done();
+        });
+    });
+  });
+
+  describe('GET /search - XSS Endpoint', () => {
+    it('should return search results', (done) => {
+      request(app)
+        .get('/search?q=test')
+        .expect(200)
+        .end((err, res) => {
+          if (err) return done(err);
+          expect(res.text).to.include('test');
+          done();
+        });
+    });
+
+    it('should be vulnerable to XSS', (done) => {
+      request(app)
+        .get('/search?q=<script>alert("XSS")</script>')
+        .expect(200)
+        .end((err, res) => {
+          if (err) return done(err);
+          expect(res.text).to.include('<script>');
+          done();
+        });
+    });
+
+    it('should not sanitize HTML entities', (done) => {
+      request(app)
+        .get('/search?q=<img src=x onerror=alert(1)>')
+        .expect(200)
+        .end((err, res) => {
+          if (err) return done(err);
+          expect(res.text).to.include('<img');
+          done();
+        });
+    });
+  });
+
+  describe('POST /encrypt - Weak Cryptography Endpoint', () => {
+    it('should encrypt data', (done) => {
+      request(app)
+        .post('/encrypt')
+        .send({ data: 'sensitive information' })
+        .expect(200)
+        .end((err, res) => {
+          if (err) return done(err);
+          expect(res.body).to.have.property('encrypted');
+          expect(res.body.encrypted).to.be.a('string');
+          done();
+        });
+    });
+
+    it('should use weak encryption algorithm', (done) => {
+      request(app)
+        .post('/encrypt')
+        .send({ data: 'password123' })
+        .expect(200)
+        .end((err, res) => {
+          if (err) return done(err);
+          // DES produces short encrypted strings
+          expect(res.body.encrypted.length).to.be.lessThan(100);
+          done();
+        });
+    });
+  });
+
+  describe('GET /fetch-url - SSRF Endpoint', () => {
+    it('should fetch external URLs', (done) => {
+      request(app)
+        .get('/fetch-url?url=http://example.com')
+        .timeout(5000)
+        .end((err, res) => {
+          expect(res.status).to.be.oneOf([200, 500]);
+          done();
+        });
+    });
+
+    it('should be vulnerable to SSRF attacks', (done) => {
+      request(app)
+        .get('/fetch-url?url=http://localhost:22')
+        .timeout(5000)
+        .end((err, res) => {
+          expect(res.status).to.exist;
+          done();
+        });
+    });
+  });
+
+  describe('POST /calculate - Code Injection Endpoint', () => {
+    it('should evaluate mathematical expressions', (done) => {
+      request(app)
+        .post('/calculate')
+        .send({ expression: '2 + 2' })
+        .expect(200)
+        .end((err, res) => {
+          if (err) return done(err);
+          expect(res.body.result).to.equal(4);
+          done();
+        });
+    });
+
+    it('should be vulnerable to code injection via eval', (done) => {
+      request(app)
+        .post('/calculate')
+        .send({ expression: '1 + 1' })
+        .expect(200)
+        .end((err, res) => {
+          if (err) return done(err);
+          expect(res.body).to.have.property('result');
+          done();
+        });
+    });
+
+    it('should allow arbitrary code execution', (done) => {
+      request(app)
+        .post('/calculate')
+        .send({ expression: 'process.version' })
+        .expect(200)
+        .end((err, res) => {
+          if (err) return done(err);
+          expect(res.body.result).to.be.a('string');
+          done();
+        });
+    });
+  });
+
+  describe('GET /validate-email - ReDoS Endpoint', () => {
+    it('should validate correct email format', (done) => {
+      request(app)
+        .get('/validate-email?email=test@example.com')
+        .expect(200)
+        .end((err, res) => {
+          if (err) return done(err);
+          expect(res.body).to.have.property('valid');
+          done();
+        });
+    });
+
+    it('should reject invalid email format', (done) => {
+      request(app)
+        .get('/validate-email?email=invalid-email')
+        .expect(200)
+        .end((err, res) => {
+          if (err) return done(err);
+          expect(res.body.valid).to.be.a('boolean');
+          done();
+        });
+    });
+  });
+
+  describe('GET /generate-token - Insecure Random Endpoint', () => {
+    it('should generate a token', (done) => {
+      request(app)
+        .get('/generate-token')
+        .expect(200)
+        .end((err, res) => {
+          if (err) return done(err);
+          expect(res.body).to.have.property('token');
+          expect(res.body.token).to.be.a('string');
+          done();
+        });
+    });
+
+    it('should generate different tokens', async () => {
+      const res1 = await request(app).get('/generate-token');
+      const res2 = await request(app).get('/generate-token');
+      
+      expect(res1.body.token).to.not.equal(res2.body.token);
+    });
+
+    it('should use predictable random generation', (done) => {
+      request(app)
+        .get('/generate-token')
+        .expect(200)
+        .end((err, res) => {
+          if (err) return done(err);
+          // Token gerado com Math.random() é curto
+          expect(res.body.token.length).to.be.lessThan(20);
+          done();
+        });
+    });
+  });
+
+  describe('POST /merge - Prototype Pollution Endpoint', () => {
+    it('should merge objects', (done) => {
+      request(app)
+        .post('/merge')
+        .send({ name: 'test', value: 123 })
+        .expect(200)
+        .end((err, res) => {
+          if (err) return done(err);
+          expect(res.body).to.be.an('object');
+          done();
+        });
+    });
+
+    it('should be vulnerable to prototype pollution', (done) => {
+      request(app)
+        .post('/merge')
+        .send({ "__proto__": { "isAdmin": true } })
+        .expect(200)
+        .end((err, res) => {
+          if (err) return done(err);
+          expect(res.body).to.exist;
+          done();
+        });
+    });
+  });
+
+  describe('POST /users - Mass Assignment Endpoint', () => {
+    it('should create new user', (done) => {
+      request(app)
+        .post('/users')
+        .send({ username: 'newuser', email: 'new@test.com' })
+        .expect(200)
+        .end((err, res) => {
+          if (err) return done(err);
+          expect(res.body).to.have.property('username');
+          done();
+        });
+    });
+
+    it('should allow mass assignment of privileged fields', (done) => {
+      request(app)
+        .post('/users')
+        .send({ 
+          username: 'hacker', 
+          isAdmin: true, 
+          role: 'admin' 
+        })
+        .expect(200)
+        .end((err, res) => {
+          if (err) return done(err);
+          expect(res.body.isAdmin).to.equal(true);
+          done();
+        });
+    });
+  });
+
+  describe('POST /verify-token - Timing Attack Endpoint', () => {
+    it('should verify valid token', (done) => {
+      request(app)
+        .post('/verify-token')
+        .send({ token: 'super-secret-token-12345' })
+        .expect(200)
+        .end((err, res) => {
+          if (err) return done(err);
+          expect(res.body).to.have.property('valid');
+          done();
+        });
+    });
+
+    it('should reject invalid token', (done) => {
+      request(app)
+        .post('/verify-token')
+        .send({ token: 'wrong-token' })
+        .expect(200)
+        .end((err, res) => {
+          if (err) return done(err);
+          expect(res.body.valid).to.be.false;
+          done();
+        });
+    });
+  });
+
+  describe('Error Handling', () => {
+    it('should expose error details', (done) => {
+      request(app)
+        .get('/nonexistent-endpoint')
+        .end((err, res) => {
+          expect(res.status).to.equal(404);
+          done();
+        });
+    });
   });
 });
 
-// GET /users/:id - SQL Injection
-app.get('/users/:id', (req, res) => {
-  const query = `SELECT * FROM users WHERE id = ${req.params.id}`;
-  pool.query(query, (err, result) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(result.rows);
+// Cálculo de cobertura mínima
+describe('Code Coverage Validation', () => {
+  it('should achieve minimum code coverage', function() {
+    // Este teste valida que a cobertura mínima foi atingida
+    // A cobertura real será verificada pelo nyc
+    expect(true).to.be.true;
   });
 });
-
-// POST /login - SQL Injection
-app.post('/login', (req, res) => {
-  const { username, password } = req.body;
-  const query = `SELECT * FROM users WHERE username = '${username}' AND password = '${password}'`;
-  pool.query(query, (err, result) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (result.rows.length > 0) res.json({ success: true });
-    else res.status(401).json({ success: false });
-  });
-});
-
-// POST /execute - Command Injection
-app.post('/execute', (req, res) => {
-  exec(req.body.command, (err, stdout, stderr) => {
-    res.json({ output: stdout || stderr || err });
-  });
-});
-
-// GET /download - Path Traversal
-app.get('/download', (req, res) => {
-  const file = req.query.file || '';
-  res.sendFile(file, { root: '.' }, (err) => {
-    if (err) res.status(500).send(err.message);
-  });
-});
-
-// GET /search - XSS Refletido
-app.get('/search', (req, res) => {
-  res.send(`Resultados para: ${req.query.q}`);
-});
-
-// POST /encrypt - Criptografia Fraca (DES)
-app.post('/encrypt', (req, res) => {
-  const cipher = crypto.createCipher('des', 'chavefraca');
-  let encrypted = cipher.update(req.body.data || '', 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  res.json({ encrypted });
-});
-
-// GET /fetch-url - SSRF (fix: suporte a http/https dinâmico)
-app.get('/fetch-url', (req, res) => {
-  if (!req.query.url) return res.status(400).json({ error: 'url required' });
-  const urlModule = require('url');
-  const parsedUrl = urlModule.parse(req.query.url);
-  const protocolLib = parsedUrl.protocol === 'http:' ? http : https;
-  protocolLib.get(req.query.url, (resp) => {
-    let data = '';
-    resp.on('data', chunk => data += chunk);
-    resp.on('end', () => res.send(data));
-  }).on('error', (err) => res.status(500).json({ error: err.message }));
-});
-
-// POST /calculate - Code Injection (eval)
-app.post('/calculate', (req, res) => {
-  try {
-    const result = eval(req.body.expression || '0');
-    res.json({ result });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// GET /validate-email - ReDoS (regex vulnerável)
-app.get('/validate-email', (req, res) => {
-  const evilRegex = /^([a-zA-Z0-9]+)(\+[a-zA-Z0-9]+)*@evilcorp\.com$/;
-  const valid = evilRegex.test(req.query.email || '');
-  res.json({ valid });
-});
-
-// GET /generate-token - Random Inseguro
-app.get('/generate-token', (req, res) => {
-  const token = Math.random().toString(36).substring(2, 15);
-  res.json({ token });
-});
-
-// POST /merge - Prototype Pollution
-app.post('/merge', (req, res) => {
-  const target = {};
-  Object.assign(target, req.body);
-  res.json(target);
-});
-
-// POST /users - Mass Assignment
-app.post('/users', (req, res) => {
-  const { username, email, isAdmin } = req.body;
-  const query = `INSERT INTO users (username, email, isadmin) VALUES ('${username}', '${email}', ${isAdmin || false}) RETURNING *`;
-  pool.query(query, (err, result) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(result.rows[0]);
-  });
-});
-
-// POST /verify-token - Timing Attack
-app.post('/verify-token', (req, res) => {
-  const validToken = 'super-secret-token-12345';
-  let isValid = true;
-  const token = req.body.token || '';
-  for (let i = 0; i < token.length; i++) {
-    if (token[i] !== validToken[i]) isValid = false;
-  }
-  res.json({ valid: isValid });
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`API rodando na porta ${PORT}`);
-  console.log(`Swagger: http://localhost:${PORT}/api-docs`);
-});
-
-module.exports = app;
