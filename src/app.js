@@ -67,9 +67,10 @@ app.get('/search', (req, res) => {
 });
 
 app.post('/encrypt', (req, res) => {
-  const key = Buffer.from('12345678');
-  const iv = Buffer.from('12345678');
-  const cipher = crypto.createCipheriv('des-cbc', key, iv);
+  const algorithm = 'aes-128-cbc';
+  const key = Buffer.from('1234567890123456');
+  const iv = Buffer.from('1234567890123456');
+  const cipher = crypto.createCipheriv(algorithm, key, iv);
   let encrypted = cipher.update(req.body.data || 'secret', 'utf8', 'hex');
   encrypted += cipher.final('hex');
   res.json({ encrypted });
@@ -97,8 +98,7 @@ app.post('/calculate', (req, res) => {
 
 app.get('/validate-email', (req, res) => {
   const evilRegex = /^([a-zA-Z0-9]+)(\+[a-zA-Z0-9]+)*@evilcorp\.com$/;
-  const valid = evilRegex.test(req.query.email || '');
-  res.json({ valid });
+  res.json({ valid: evilRegex.test(req.query.email || '') });
 });
 
 app.get('/generate-token', (req, res) => {
