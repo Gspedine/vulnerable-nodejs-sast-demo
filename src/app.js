@@ -1,4 +1,4 @@
-// src/app.js - VERSÃO FINAL 100% VERDE
+// src/app.js - VERSÃO FINAL 100% VERDE NO NODE 18+
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -15,7 +15,6 @@ const app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Pool criado diretamente (necessário para proxyquire nos testes)
 const pool = new Pool(
   process.env.DATABASE_URL
     ? { connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }
@@ -28,18 +27,12 @@ const pool = new Pool(
       }
 );
 
-// Swagger
 const swaggerOptions = {
-  definition: {
-    openapi: '3.0.0',
-    info: { title: 'API Vulnerável - SAST Demo', version: '1.0.0' },
-  },
+  definition: { openapi: '3.0.0', info: { title: 'API Vulnerável - SAST Demo', version: '1.0.0' } },
   apis: ['src/app.js'],
 };
 const swaggerDocs = swaggerJSDoc(swaggerOptions);
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
-
-// ENDPOINTS VULNERÁVEIS (intencionais)
 
 app.get('/users/:id', (req, res) => {
   const query = `SELECT * FROM users WHERE id = ${req.params.id}`;
@@ -65,8 +58,8 @@ app.post('/execute', (req, res) => {
 });
 
 app.get('/download', (req, res) => {
-  const file = req.query.file || '';
-  res.sendFile(file || 'README.md', { root: '.' }, () => {});
+  const file = req.query.file || 'README.md';
+  res.sendFile(file, { root: '.' }, () => {});
 });
 
 app.get('/search', (req, res) => {
@@ -74,9 +67,10 @@ app.get('/search', (req, res) => {
 });
 
 app.post('/encrypt', (req, res) => {
-  // VERSÃO QUE FUNCIONA NO NODE 18+ (mantém a vulnerabilidade!)
-  const cipher = crypto.createCipher('des', 'chavefraca');
-  let encrypted = cipher.update(req.body.data || '', 'utf8', 'hex');
+  const key = Buffer.from('12345678');
+  const iv = Buffer.from('12345678');
+  const cipher = crypto.createCipheriv('des-cbc', key, iv);
+  let encrypted = cipher.update(req.body.data || 'secret', 'utf8', 'hex');
   encrypted += cipher.final('hex');
   res.json({ encrypted });
 });
@@ -94,7 +88,7 @@ app.get('/fetch-url', (req, res) => {
 
 app.post('/calculate', (req, res) => {
   try {
-    const result = eval(req.body.expression || '0'); // NOSONAR - intencional
+    const result = eval(req.body.expression || '0');
     res.json({ result });
   } catch (e) {
     res.status(500).json({ error: 'eval error' });
@@ -108,8 +102,7 @@ app.get('/validate-email', (req, res) => {
 });
 
 app.get('/generate-token', (req, res) => {
-  const token = Math.random().toString(36).substring(2, 15);
-  res.json({ token });
+  res.json({ token: Math.random().toString(36).substring(2, 15) });
 });
 
 app.post('/merge', (req, res) => {
@@ -132,18 +125,12 @@ app.post('/verify-token', (req, res) => {
   const validToken = 'super-secret-token-12345';
   let valid = true;
   for (let i = 0; i < token.length; i++) {
-    if (token[i] !== validToken[i]) {
-      valid = false;
-      break;
-    }
+    if (token[i] !== validToken[i]) { valid = false; break; }
   }
   res.json({ valid });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`API rodando na porta ${PORT}`);
-  console.log(`Swagger: http://localhost:${PORT}/api-docs`);
-});
+app.listen(PORT, () => console.log(`API rodando na porta ${PORT}`));
 
 module.exports = app;
