@@ -15,7 +15,7 @@ const app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Configuração do PostgreSQL
+// Configuração do PostgreSQL (local ou Render)
 const poolConfig = process.env.DATABASE_URL
   ? { connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }
   : {
@@ -28,8 +28,9 @@ const poolConfig = process.env.DATABASE_URL
 
 const pool = new Pool(poolConfig);
 
+// Teste rápido de conexão (não bloqueia os testes)
 pool.query('SELECT NOW()', (err) => {
-  if (err) console.error('Erro ao conectar ao PostgreSQL:', err.stack);
+  if (err) console.error('DB connection error:', err.message);
   else console.log('Conectado ao PostgreSQL com sucesso!');
 });
 
@@ -44,7 +45,9 @@ const swaggerOptions = {
 const swaggerDocs = swaggerJSDoc(swaggerOptions);
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
 
-// === ENDPOINTS VULNERÁVEIS ===
+// ================================
+// ENDPOINTS VULNERÁVEIS (intencionais)
+// ================================
 
 app.get('/users/:id', (req, res) => {
   const query = `SELECT * FROM users WHERE id = ${req.params.id}`;
@@ -64,15 +67,16 @@ app.post('/login', (req, res) => {
 });
 
 app.post('/execute', (req, res) => {
-  exec(req.body.command || '', (err, stdout, stderr) => {
-    res.json({ output: stdout || stderr || err?.message || 'no output' });
+  const command = req.body.command || '';
+  exec(command, (err, stdout, stderr) => {
+    res.json({ output: stdout || stderr || err?.message || '' });
   });
 });
 
 app.get('/download', (req, res) => {
   const file = req.query.file || '';
   res.sendFile(file, { root: '.' }, (err) => {
-    if (err) res.status(500).send(err.message);
+    if (err) res.status(500).send('File error');
   });
 });
 
@@ -100,14 +104,14 @@ app.get('/fetch-url', (req, res) => {
 
   lib.get(target, (resp) => {
     let data = '';
-    resp.on('data', chunk => data += chunk);
+    resp.on('data', (chunk) => data += chunk);
     resp.on('end', () => res.send(data));
   }).on('error', (e) => res.status(500).json({ error: e.message }));
 });
 
 app.post('/calculate', (req, res) => {
   try {
-    const result = eval(req.body.expression || '0');
+    const result = eval(req.body.expression || '0'); // NOSONAR - intencionalmente vulnerável
     res.json({ result });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -117,6 +121,7 @@ app.post('/calculate', (req, res) => {
 app.get('/validate-email', (req, res) => {
   const evilRegex = /^([a-zA-Z0-9]+)(\+[a-zA-Z0-9]+)*@evilcorp\.com$/;
   const valid = evilRegex.test(req.query.email || '');
+  '');
   res.json({ valid });
 });
 
@@ -142,11 +147,18 @@ app.post('/users', (req, res) => {
 
 app.post('/verify-token', (req, res) => {
   const validToken = 'super-secret-token-12345';
-  let isValid = true;
   const token = req.body.token || '';
-  for (let i = 0; i < token.length; i++) {
-    if (token[i] !== validToken[i]) isValid = false;
+  let isValid = token.length === validToken.length;
+
+  if (isValid) {
+    for (let i = 0; i < token.length; i++) {
+      if (token[i] !== validToken[i]) {
+        isValid = false;
+        break;
+      }
+    }
   }
+
   res.json({ valid: isValid });
 });
 
