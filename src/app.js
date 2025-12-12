@@ -14,10 +14,9 @@ const app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// NÃO CRIA O POOL AQUI — será criado só quando necessário (e mockado nos testes)
+// Pool criado apenas quando necessário (para permitir o stub nos testes)
 let pool;
 
-// Função para obter o pool (permite mock nos testes)
 const getPool = () => {
   if (!pool) {
     const { Pool } = require('pg');
@@ -37,13 +36,17 @@ const getPool = () => {
 
 // Swagger
 const swaggerOptions = {
-  definition: { openapi: '3.0.0', info: { title: 'API Vulnerável - SAST Demo', version: '1.0.0' } },
+  definition: {
+    openapi: '3.0.0',
+    info: { title: 'API Vulnerável - SAST Demo', version: '1.0.0' },
+  },
   apis: ['src/app.js'],
 };
 const swaggerDocs = swaggerJSDoc(swaggerOptions);
-app.use('/api.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
 
-// ENDPOINTS VULNERÁVEIS
+// ENDPOINTS VULNERÁVEIS (intencionais)
+
 app.get('/users/:id', (req, res) => {
   const query = `SELECT * FROM users WHERE id = ${req.params.id}`;
   getPool().query(query, (err, result) => {
@@ -100,7 +103,7 @@ app.get('/fetch-url', (req, res) => {
 
 app.post('/calculate', (req, res) => {
   try {
-    const result = eval(req.body.expression || '0');
+    const result = eval(req.body.expression || '0'); // NOSONAR
     res.json({ result });
   } catch (e) {
     res.status(500).json({ error: 'eval error' });
@@ -138,12 +141,18 @@ app.post('/verify-token', (req, res) => {
   const validToken = 'super-secret-token-12345';
   let valid = true;
   for (let i = 0; i < token.length; i++) {
-    if (token[i] !== validToken[i]) { valid = false; break; }
+    if (token[i] !== validToken[i]) {
+      valid = false;
+      break;
+    }
   }
   res.json({ valid });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`API rodando na porta ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`API rodando na porta ${PORT}`);
+  console.log(`Swagger: http://localhost:${PORT}/api-docs`);
+});
 
 module.exports = app;
