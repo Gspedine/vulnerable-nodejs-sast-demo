@@ -15,7 +15,6 @@ const app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Configuração do PostgreSQL (local ou Render)
 const poolConfig = process.env.DATABASE_URL
   ? { connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }
   : {
@@ -28,13 +27,8 @@ const poolConfig = process.env.DATABASE_URL
 
 const pool = new Pool(poolConfig);
 
-// Teste rápido de conexão (não bloqueia os testes)
-pool.query('SELECT NOW()', (err) => {
-  if (err) console.error('DB connection error:', err.message);
-  else console.log('Conectado ao PostgreSQL com sucesso!');
-});
+pool.query('SELECT NOW()', () => {});
 
-// Swagger
 const swaggerOptions = {
   definition: {
     openapi: '3.0.0',
@@ -44,10 +38,6 @@ const swaggerOptions = {
 };
 const swaggerDocs = swaggerJSDoc(swaggerOptions);
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
-
-// ================================
-// ENDPOINTS VULNERÁVEIS (intencionais)
-// ================================
 
 app.get('/users/:id', (req, res) => {
   const query = `SELECT * FROM users WHERE id = ${req.params.id}`;
@@ -67,17 +57,14 @@ app.post('/login', (req, res) => {
 });
 
 app.post('/execute', (req, res) => {
-  const command = req.body.command || '';
-  exec(command, (err, stdout, stderr) => {
+  exec(req.body.command || '', (err, stdout, stderr) => {
     res.json({ output: stdout || stderr || err?.message || '' });
   });
 });
 
 app.get('/download', (req, res) => {
   const file = req.query.file || '';
-  res.sendFile(file, { root: '.' }, (err) => {
-    if (err) res.status(500).send('File error');
-  });
+  res.sendFile(file, { root: '.' }, () => {});
 });
 
 app.get('/search', (req, res) => {
@@ -96,7 +83,7 @@ app.post('/encrypt', (req, res) => {
 });
 
 app.get('/fetch-url', (req, res) => {
-  const target = req.query.url;
+  const target = req.query.url || '';
   if (!target) return res.status(400).json({ error: 'url required' });
 
   const parsed = url.parse(target);
@@ -104,17 +91,17 @@ app.get('/fetch-url', (req, res) => {
 
   lib.get(target, (resp) => {
     let data = '';
-    resp.on('data', (chunk) => data += chunk);
+    resp.on('data', c => data += c);
     resp.on('end', () => res.send(data));
-  }).on('error', (e) => res.status(500).json({ error: e.message }));
+  }).on('error', () => res.status(500).send('SSRF error'));
 });
 
 app.post('/calculate', (req, res) => {
   try {
-    const result = eval(req.body.expression || '0'); // NOSONAR - intencionalmente vulnerável
+    const result = eval(req.body.expression || '0');
     res.json({ result });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: 'Eval error' });
   }
 });
 
@@ -130,9 +117,9 @@ app.get('/generate-token', (req, res) => {
 });
 
 app.post('/merge', (req, res) => {
-  const target = {};
-  Object.assign(target, req.body);
-  res.json(target);
+  const obj = {};
+  Object.assign(obj, req.body);
+  res.json(obj);
 });
 
 app.post('/users', (req, res) => {
@@ -147,24 +134,19 @@ app.post('/users', (req, res) => {
 app.post('/verify-token', (req, res) => {
   const validToken = 'super-secret-token-12345';
   const token = req.body.token || '';
-  let isValid = token.length === validToken.length;
-
-  if (isValid) {
-    for (let i = 0; i < token.length; i++) {
-      if (token[i] !== validToken[i]) {
-        isValid = false;
-        break;
-      }
+  let valid = true;
+  for (let i = 0; i < token.length; i++) {
+    if (token[i] !== validToken[i]) {
+      valid = false;
+      break;
     }
   }
-
-  res.json({ valid: isValid });
+  res.json({ valid });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`API rodando na porta ${PORT}`);
-  console.log(`Swagger: http://localhost:${PORT}/api-docs`);
 });
 
 module.exports = app;

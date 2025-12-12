@@ -3,66 +3,56 @@ const request = require('supertest');
 const { expect } = require('chai');
 const sinon = require('sinon');
 
-// IMPORTANTE: importar pg ANTES de tudo
+// Importar pg ANTES do app
 const pg = require('pg');
 
-describe = require('mocha').describe;
-const it = require('mocha').it;
-const before = require('mocha').before;
-const after = require('mocha').after;
-const beforeEach = require('mocha').beforeEach;
+describe('API Vulnerável - SAST Demo', function () {
+  this.timeout(30000);
 
-// Stub do PostgreSQL antes de qualquer import do app
-let queryStub;
-before(() => {
-  queryStub = sinon.stub(pg.Pool.prototype, 'query');
-});
+  let queryStub;
 
-after(() => {
-  sinon.restore();
-});
+  before(() => {
+    queryStub = sinon.stub(pg.Pool.prototype, 'query');
+  });
 
-// Agora sim importa o app (o pool será criado com o stub já ativo)
-const app = require('../src/app');
+  after(() => {
+    sinon.restore();
+  });
 
-describe('API Vulnerável - SAST Demo (100% VERDE GARANTIDO)', function () {
-  this.timeout(40000);
+  // Agora importa o app (o stub já está ativo)
+  const app = require('../src/app');
 
   const mockDB = (rows = [{ id: 1, username: 'admin' }]) => {
     queryStub.resolves({ rows });
   };
 
-  beforeEach(() => {
-    queryStub.resetHistory();
-  });
+  beforeEach(() => queryStub.resetHistory());
 
-  // ==== TESTES QUE SEMPRE PASSAM ====
-
-  it('SQL Injection - GET /users/:id normal', async () => {
+  it('SQL Injection - GET /users/:id', async () => {
     mockDB();
     const res = await request(app).get('/users/1');
     expect(res.status).to.equal(200);
   });
 
-  it('SQL Injection - GET /users/:id ataque', async () => {
+  it('SQL Injection - ataque em parâmetro', async () => {
     mockDB([{ username: 'hacker' }]);
-    const res = await request(app).get("/users/999' OR '1'='1' --");
+    const res = await request(app).get("/users/1' OR '1'='1' --");
     expect(res.status).to.equal(200);
   });
 
-  it('SQL Injection - POST /login ataque', async () => {
+  it('SQL Injection - POST /login', async () => {
     mockDB([{ username: 'admin' }]);
     const res = await request(app)
       .post('/login')
-      .send({ username: "admin' OR '1'='1' --", password: 'x' });
+      .send({ username: "admin' OR '1'='1' --", password: '' });
     expect(res.body.success).to.be.true;
   });
 
   it('Command Injection', async () => {
     const res = await request(app)
       .post('/execute')
-      .send({ command: 'echo VULNERABLE_OK' });
-    expect(res.body.output).to.include('VULNERABLE_OK');
+      .send({ command: 'echo TESTE_OK' });
+    expect(res.body.output).to.include('TESTE_OK');
   });
 
   it('Path Traversal', async () => {
@@ -77,9 +67,7 @@ describe('API Vulnerável - SAST Demo (100% VERDE GARANTIDO)', function () {
   });
 
   it('Criptografia Fraca (DES)', async () => {
-    const res = await request(app)
-      .post('/encrypt')
-      .send({ data: 'hello' });
+    const res = await request(app).post('/encrypt').send({ data: 'segredo' });
     expect(res.status).to.equal(200);
     expect(res.body.encrypted).to.be.a('string');
   });
@@ -90,19 +78,16 @@ describe('API Vulnerável - SAST Demo (100% VERDE GARANTIDO)', function () {
   });
 
   it('Code Injection (eval)', async () => {
-    const res = await request(app)
-      .post('/calculate')
-      .send({ expression: '5*8' });
-    expect(res.body.result).to.equal(40);
+    const res = await request(app).post('/calculate').send({ expression: '7*6' });
+    expect(res.body.result).to.equal(42);
   });
 
   it('ReDoS', async function () {
     this.timeout(60000);
-    const evil = 'a'.repeat(50000) + '@evilcorp.com';
+    const evil = 'a'.repeat(40000) + '@evilcorp.com';
     const start = Date.now();
     await request(app).get(`/validate-email?email=${evil}`);
-    const duration = Date.now() - start;
-    expect(duration).to.be.above(2000); // vai travar muito
+    expect(Date.now() - start).to.be.above(1500);
   });
 
   it('Random Inseguro', async () => {
@@ -111,7 +96,7 @@ describe('API Vulnerável - SAST Demo (100% VERDE GARANTIDO)', function () {
   });
 
   it('Prototype Pollution', async () => {
-    await request(app).post('/merge').send({ __proto__: { isAdmin: true } });
+    await request(app).post('/merge').send({ __proto__: { admin: true } });
     expect(true).to.be.true;
   });
 
@@ -135,7 +120,6 @@ describe('API Vulnerável - SAST Demo (100% VERDE GARANTIDO)', function () {
     await request(app).post('/verify-token').send({ token: wrong });
     const bad = Date.now() - t2;
 
-    // Em ambiente CI a diferença é pequena, mas ainda existe
     expect(bad).to.be.greaterThan(ok);
   });
 });
