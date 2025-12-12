@@ -1,243 +1,178 @@
-// tests/app.test.js - Testes unitários com cobertura
+// src/app.js
+require('dotenv').config();
+const express = require('express');
+const bodyParser = require('body-parser');
+const { Pool } = require('pg');
+const { exec } = require('child_process');
+const http = require('http');  // Adicionado para suportar http em /fetch-url
+const https = require('https');
+const path = require('path');
+const crypto = require('crypto');
+const swaggerJSDoc = require('swagger-jsdoc');
+const swaggerUi = require('swagger-ui-express');
 
-const request = require('supertest');
-const { expect } = require('chai');
+const app = express();
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 
-// Mock robusto do módulo pg (PostgreSQL)
-const pgMock = {
-  Pool: class {
-    constructor() {
-      // Simula o comportamento async/await usado no app.js
-      this.query = async (query) => {
-        // Simula retorno padrão para queries SELECT
-        if (query.includes('SELECT')) {
-          return {
-            rows: [
-              { id: 1, username: 'test', email: 'test@test.com', isadmin: false }
-            ]
-          };
-        }
-        // Simula INSERT com RETURNING
-        if (query.includes('INSERT')) {
-          return {
-            rows: [
-              { id: 2, username: 'newuser', email: 'new@test.com', isadmin: true }
-            ]
-          };
-        }
-        return { rows: [] };
-      };
+// Configuração flexível do PostgreSQL (Render + local)
+const poolConfig = process.env.DATABASE_URL
+  ? { connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }
+  : {
+      host: process.env.DB_HOST || 'localhost',
+      user: process.env.DB_USER || 'postgres',
+      password: process.env.DB_PASSWORD || '',
+      database: process.env.DB_NAME || 'sast_demo',
+      port: process.env.DB_PORT || 5432,
+    };
 
-      // Método connect para teste inicial (não usado diretamente, mas evita erros)
-      this.connect = async () => ({
-        query: this.query,
-        release: () => {}
-      });
-    }
+const pool = new Pool(poolConfig);
+
+// Teste de conexão
+pool.query('SELECT NOW()', (err, res) => {
+  if (err) console.error('Erro ao conectar ao PostgreSQL:', err.stack);
+  else console.log('Conectado ao PostgreSQL com sucesso!');
+});
+
+// Swagger
+const swaggerOptions = {
+  definition: {
+    openapi: '3.0.0',
+    info: { title: 'API Vulnerável - SAST Demo', version: '1.0.0' },
+  },
+  apis: ['src/app.js'],
+};
+const swaggerDocs = swaggerJSDoc(swaggerOptions);
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
+
+// === ENDPOINTS VULNERÁVEIS (compatíveis com app.test.js) ===
+
+// GET /users - SQL Injection (com query.id para compatibilidade com testes)
+app.get('/users', (req, res) => {
+  const id = req.query.id || 1;
+  const query = `SELECT * FROM users WHERE id = ${id}`;
+  pool.query(query, (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(result.rows);
+  });
+});
+
+// GET /users/:id - SQL Injection
+app.get('/users/:id', (req, res) => {
+  const query = `SELECT * FROM users WHERE id = ${req.params.id}`;
+  pool.query(query, (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(result.rows);
+  });
+});
+
+// POST /login - SQL Injection
+app.post('/login', (req, res) => {
+  const { username, password } = req.body;
+  const query = `SELECT * FROM users WHERE username = '${username}' AND password = '${password}'`;
+  pool.query(query, (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (result.rows.length > 0) res.json({ success: true });
+    else res.status(401).json({ success: false });
+  });
+});
+
+// POST /execute - Command Injection
+app.post('/execute', (req, res) => {
+  exec(req.body.command, (err, stdout, stderr) => {
+    res.json({ output: stdout || stderr || err });
+  });
+});
+
+// GET /download - Path Traversal
+app.get('/download', (req, res) => {
+  const file = req.query.file || '';
+  res.sendFile(file, { root: '.' }, (err) => {
+    if (err) res.status(500).send(err.message);
+  });
+});
+
+// GET /search - XSS Refletido
+app.get('/search', (req, res) => {
+  res.send(`Resultados para: ${req.query.q}`);
+});
+
+// POST /encrypt - Criptografia Fraca (DES)
+app.post('/encrypt', (req, res) => {
+  const cipher = crypto.createCipher('des', 'chavefraca');
+  let encrypted = cipher.update(req.body.data || '', 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  res.json({ encrypted });
+});
+
+// GET /fetch-url - SSRF (fix: suporte a http/https dinâmico)
+app.get('/fetch-url', (req, res) => {
+  if (!req.query.url) return res.status(400).json({ error: 'url required' });
+  const urlModule = require('url');
+  const parsedUrl = urlModule.parse(req.query.url);
+  const protocolLib = parsedUrl.protocol === 'http:' ? http : https;
+  protocolLib.get(req.query.url, (resp) => {
+    let data = '';
+    resp.on('data', chunk => data += chunk);
+    resp.on('end', () => res.send(data));
+  }).on('error', (err) => res.status(500).json({ error: err.message }));
+});
+
+// POST /calculate - Code Injection (eval)
+app.post('/calculate', (req, res) => {
+  try {
+    const result = eval(req.body.expression || '0');
+    res.json({ result });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-};
+});
 
-// Substitui o módulo real pelo mock antes de importar o app
-require.cache[require.resolve('pg')] = {
-  exports: { Pool: pgMock.Pool }
-};
+// GET /validate-email - ReDoS (regex vulnerável)
+app.get('/validate-email', (req, res) => {
+  const evilRegex = /^([a-zA-Z0-9]+)(\+[a-zA-Z0-9]+)*@evilcorp\.com$/;
+  const valid = evilRegex.test(req.query.email || '');
+  res.json({ valid });
+});
 
-const app = require('../src/app');
+// GET /generate-token - Random Inseguro
+app.get('/generate-token', (req, res) => {
+  const token = Math.random().toString(36).substring(2, 15);
+  res.json({ token });
+});
 
-describe('Vulnerable Application - Unit Tests', () => {
+// POST /merge - Prototype Pollution
+app.post('/merge', (req, res) => {
+  const target = {};
+  Object.assign(target, req.body);
+  res.json(target);
+});
 
-  describe('GET /users - SQL Injection Endpoint (query param)', () => {
-    it('should return user data for valid ID', async () => {
-      const res = await request(app).get('/users?id=1').expect(200);
-      expect(res.body).to.be.an('array');
-      expect(res.body[0]).to.have.property('username');
-    });
-
-    it('should be vulnerable to SQL injection', async () => {
-      const res = await request(app).get('/users?id=1 OR 1=1').expect(200);
-      expect(res.body).to.be.an('array');
-    });
-  });
-
-  describe('GET /users/:id - SQL Injection Endpoint (path param)', () => {
-    it('should return user data for valid ID', async () => {
-      const res = await request(app).get('/users/1').expect(200);
-      expect(res.body).to.be.an('array');
-    });
-
-    it('should be vulnerable to SQL injection attack', async () => {
-      const res = await request(app).get('/users/1 OR 1=1').expect(200);
-      expect(res.body).to.exist;
-    });
-  });
-
-  describe('POST /login - Authentication Endpoint', () => {
-    it('should authenticate valid user', async () => {
-      const res = await request(app)
-        .post('/login')
-        .send({ username: 'admin', password: 'password' })
-        .expect(200);
-      expect(res.body.success).to.be.true;
-    });
-
-    it('should be vulnerable to SQL injection in login', async () => {
-      const res = await request(app)
-        .post('/login')
-        .send({ username: "admin' OR '1'='1", password: 'anything' });
-      expect(res.status).to.be.oneOf([200, 401]);
-    });
-
-    it('should not have rate limiting', async () => {
-      const promises = Array(10).fill(null).map(() =>
-        request(app)
-          .post('/login')
-          .send({ username: 'test', password: 'wrong' })
-      );
-      const results = await Promise.all(promises);
-      expect(results).to.have.lengthOf(10);
-    });
-  });
-
-  describe('POST /execute - Command Injection Endpoint', () => {
-    it('should execute basic commands', async () => {
-      const res = await request(app)
-        .post('/execute')
-        .send({ command: 'ls' });
-      expect(res.status).to.be.oneOf([200, 500]);
-    });
-
-    it('should be vulnerable to command injection', async () => {
-      const res = await request(app)
-        .post('/execute')
-        .send({ command: 'ls; echo "injected"' });
-      expect(res.status).to.be.oneOf([200, 500]);
-    });
-  });
-
-  describe('GET /search - XSS Endpoint', () => {
-    it('should return search results', async () => {
-      const res = await request(app).get('/search?q=test').expect(200);
-      expect(res.text).to.include('test');
-    });
-
-    it('should be vulnerable to reflected XSS', async () => {
-      const payload = '<script>alert("XSS")</script>';
-      const res = await request(app).get(`/search?q=${encodeURIComponent(payload)}`).expect(200);
-      expect(res.text).to.include(payload);
-    });
-  });
-
-  describe('GET /fetch-url - SSRF Endpoint', () => {
-    it('should fetch external URLs', async () => {
-      const res = await request(app)
-        .get('/fetch-url?url=https://httpbin.org/status/200')
-        .timeout(10000);
-      expect(res.status).to.be.oneOf([200, 500]);
-    });
-
-    it('should allow internal access (SSRF)', async () => {
-      const res = await request(app)
-        .get('/fetch-url?url=http://169.254.169.254/latest/meta-data/')
-        .timeout(10000);
-      expect(res.status).to.exist;
-    });
-  });
-
-  describe('POST /calculate - Code Injection Endpoint', () => {
-    it('should evaluate math expressions', async () => {
-      const res = await request(app)
-        .post('/calculate')
-        .send({ expression: '2 + 2' })
-        .expect(200);
-      expect(res.body.result).to.equal(4);
-    });
-
-    it('should allow arbitrary code execution via eval', async () => {
-      const res = await request(app)
-        .post('/calculate')
-        .send({ expression: 'process.env.NODE_ENV' })
-        .expect(200);
-      expect(res.body.result).to.be.a('string');
-    });
-  });
-
-  describe('GET /download - Path Traversal Endpoint', () => {
-    it('should serve valid files', async () => {
-      const res = await request(app).get('/download?file=package.json');
-      expect(res.status).to.be.oneOf([200, 404, 500]);
-    });
-
-    it('should be vulnerable to path traversal', async () => {
-      const res = await request(app).get('/download?file=../package.json');
-      expect(res.status).to.exist;
-    });
-  });
-
-  describe('POST /merge - Prototype Pollution Endpoint', () => {
-    it('should merge objects normally', async () => {
-      const res = await request(app)
-        .post('/merge')
-        .send({ name: 'test' })
-        .expect(200);
-      expect(res.body.name).to.equal('test');
-    });
-
-    it('should be vulnerable to prototype pollution', async () => {
-      const res = await request(app)
-        .post('/merge')
-        .send({ "__proto__": { polluted: true } })
-        .expect(200);
-      expect({}.polluted).to.be.undefined; // Não afeta global no teste, mas endpoint aceita
-    });
-  });
-
-  describe('POST /users - Mass Assignment Endpoint', () => {
-    it('should create new user', async () => {
-      const res = await request(app)
-        .post('/users')
-        .send({ username: 'newuser', email: 'new@test.com' })
-        .expect(200);
-      expect(res.body.username).to.equal('newuser');
-    });
-
-    it('should allow mass assignment of privileged fields', async () => {
-      const res = await request(app)
-        .post('/users')
-        .send({ username: 'hacker', email: 'hack@test.com', isAdmin: true })
-        .expect(200);
-      expect(res.body.isadmin).to.be.true;
-    });
-  });
-
-  describe('POST /verify-token - Timing Attack Endpoint', () => {
-    it('should verify valid token', async () => {
-      const res = await request(app)
-        .post('/verify-token')
-        .send({ token: 'super-secret-token-12345' })
-        .expect(200);
-      expect(res.body.valid).to.be.true;
-    });
-
-    it('should reject invalid token', async () => {
-      const res = await request(app)
-        .post('/verify-token')
-        .send({ token: 'wrong-token' })
-        .expect(200);
-      expect(res.body.valid).to.be.false;
-    });
-  });
-
-  describe('Error Handling', () => {
-    it('should expose error details on invalid routes', async () => {
-      const res = await request(app).get('/nonexistent-endpoint');
-      expect(res.status).to.be.oneOf([404, 500]);
-    });
+// POST /users - Mass Assignment
+app.post('/users', (req, res) => {
+  const { username, email, isAdmin } = req.body;
+  const query = `INSERT INTO users (username, email, isadmin) VALUES ('${username}', '${email}', ${isAdmin || false}) RETURNING *`;
+  pool.query(query, (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(result.rows[0]);
   });
 });
 
-// Validação de cobertura (nyc verifica isso)
-describe('Code Coverage Validation', () => {
-  it('should achieve minimum code coverage', function () {
-    expect(true).to.be.true;
-  });
+// POST /verify-token - Timing Attack
+app.post('/verify-token', (req, res) => {
+  const validToken = 'super-secret-token-12345';
+  let isValid = true;
+  const token = req.body.token || '';
+  for (let i = 0; i < token.length; i++) {
+    if (token[i] !== validToken[i]) isValid = false;
+  }
+  res.json({ valid: isValid });
 });
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`API rodando na porta ${PORT}`);
+  console.log(`Swagger: http://localhost:${PORT}/api-docs`);
+});
+
+module.exports = app;
